@@ -1,74 +1,100 @@
-name: CI/CD Pipeline
+name: CI/CD Pipeline # Название сценария
 
+# Условие запуска - push или PR в main
 on:
   push:
     branches:
       - main
-      - master
   pull_request:
     branches:
       - main
-      - master
 
-jobs:
-  build-and-test:
-    name: Build & Test (matrix)
+jobs: # Создаем два джоба - этапы конвейера
+
+  build-and-test: # Джоб 1. Этап CI - сборка и тестирование на разных ОС
+    name: Build & Test (matrix) # - отображаемое имя во вкладке Actions
     runs-on: ${{ matrix.os }}
 
+    # Подготовка к джобу: задаём матрицу окружений, в которых будет прогон
+    # Джоб запускается 4 раза на разных ОС
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest, macos-14]
 
+    # Шаги джоба build-and-test
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # Шаг 1. С помощью GitHub Action клонируем код репозитория в файловую систему ВМ-раннера
+      - name: Checkout repository # - отображаемое имя во вкладке Actions
+        uses: actions/checkout@v4 # uses: {автор}/{экшн}@{версия}
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # Шаг 2. Устанавливаем Java 17 под каждую ОС
+      - name: Set up JDK 17 # - отображаемое имя во вкладке Actions
+        uses: actions/setup-java@v4 # не ставим latest, а стабильную v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
 
-      - name: Build & run tests
-        run: mvn -B verify
+      # Шаг 3. Сборка и тестирование
+      - name: Build & run tests # - отображаемое имя во вкладке Actions
+        run: mvn -B verify # собираем в batch mode - без общения с пользователем
 
-  deploy:
-    name: Deploy to remote host
-    runs-on: ubuntu-latest
-    needs: build-and-test
+  deploy: # Джоб 2. Этап CD - деплой на удалённый сервер
+    name: Deploy to remote host # - отображаемое имя во вкладке Actions
+    runs-on: ubuntu-latest # всегда выполняется на Linux-раннере (одной ОС)
+    needs: build-and-test # стартуем только если весь build-and-test прошёл успешно
+    # настраиваем фильтр для деплоя только на push-и, чтобы не было деплоя при каждом PR
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Checkout repository
+      # Шаг 1. С помощью GitHub Action клонируем код репозитория в файловую систему ВМ-раннера
+      - name: Checkout repository # - отображаемое имя во вкладке Actions
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      # Шаг 2. Устанавливаем Java 17 под каждую ОС - на деплой-раннере (для сборки JAR - файла)
+      - name: Set up JDK 17 # - отображаемое имя во вкладке Actions
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
 
-      - name: Build artifact for deploy
-        # Можно без тестов, так как они уже прошли в build-and-test
+      # Шаг 3. Сборка и тестирование
+      - name: Build artifact for deploy # - отображаемое имя во вкладке Actions
+        # Собираем в batch mode - без общения с пользователем
+        # Можно без тестов -DskipTests, так как они уже прошли в build-and-test
         run: mvn -B -DskipTests package
 
-      - name: List build directory
+      #  Шаг 4. Диагностика - содержимое папки target/ покажем в логах, проверим, что .jar появился
+      - name: List build directory # - отображаемое имя во вкладке Actions
         run: ls target
 
-      - name: Set up SSH key
-        uses: webfactory/ssh-agent@v0.9.0
+      #  Шаг 5. Настроим SSH-ключ для подключения к серверу
+      - name: Set up SSH key # - отображаемое имя во вкладке Actions
+        uses: webfactory/ssh-agent@v0.9.0 # используем сторонний action, он поднимет ssh-agent на раннере
         with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }} # подсунем приватный ключ из секрета
 
-      - name: Copy artifact to server
+      #  Шаг 6. Зальем .jar файл на сервер
+      - name: Copy artifact to server # - отображаемое имя во вкладке Actions
+        # scp - утилита копирования по SSH
+        # -P ${{ secrets.DEPLOY_PORT }} - порт SSH, хранится как секрет
+        # -o StrictHostKeyChecking=no - отключает проверку known_hosts
+        # target/CurrencyConverter_evbgsl-1.0-SNAPSHOT.jar - локальный путь к .jar после сборки Maven
+        # ${{ secrets.DEPLOY_USER }} - юзер на сервере, хранится как секрет
+        # ${{ secrets.DEPLOY_HOST }} - ip сервера, хранится как секрет
+        # ${{ secrets.DEPLOY_PATH }} - путь на сервере, хранится как секрет
         run: |
           scp -P ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no \
             target/CurrencyConverter_evbgsl-1.0-SNAPSHOT.jar \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}
 
-      - name: Run deployment commands on server
+      #  Шаг 7. Выполнение команд на удалённом сервере
+      - name: Run deployment commands on server # - отображаемое имя во вкладке Actions
+        # ssh -p ... - запускаем SSH-сессию
+        # cd ${{ secrets.DEPLOY_PATH }} - переходим в папку с .jar файлом
+        # ... do something (имитируем деплой) - выходит за рамки текущего задания
+        # echo "Deployment OK at $(date)" >> deploy.log - оставляем след в лог-файле
         run: |
           ssh -p ${{ secrets.DEPLOY_PORT }} -o StrictHostKeyChecking=no \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
